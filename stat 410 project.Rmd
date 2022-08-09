@@ -1,0 +1,261 @@
+---
+title: "STAT 410 Project"
+author: 'William "Bobby" Yang'
+date: "4/23/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+#Data cleaning - NA values
+```{r}
+#There are tons of NA values; this section aims to resolve them
+#Read csv
+library(tidyverse)
+wb_countries <- read_csv('WDI_csv/WDIData.csv')
+col_data <- read_csv('archive (2)/Cost of living index by country 2020.csv')
+
+#Filter only year=2020, as the COL data is 2020
+colnames(wb_countries)
+cols_present <- which(colnames(wb_countries) == '2020')
+
+wb_countries <- wb_countries[,c(1,3,65)]
+
+#Filter only country values, not regions/continents
+which(wb_countries$`Country Name` == 'Afghanistan')[1]
+
+drop_rows <- c(1:70707)
+wb_countries <- wb_countries[-drop_rows,]
+
+#Pivot predictors from rows to columns
+wb_countries <- wb_countries %>% pivot_wider(names_from = 'Indicator Name', values_from = '2020')
+
+
+na_check <- function(x){
+  return(sum(is.na(x)))
+}
+
+#Sort out NA values - rows:
+na_country_nums <- apply(wb_countries,1,na_check)
+na_country_nums
+
+#Find countries with most NA values
+quantile(na_country_nums,probs=c(.85,.9,.95))
+many_na <- na_country_nums > 1190
+wb_countries[many_na,1]
+many_na <- na_country_nums > 1282
+wb_countries[many_na,1]
+many_na <- na_country_nums > 1347
+wb_countries[many_na,1]
+#Most of them are either not countries at all, or very small countries - drop the top 10%
+many_na <- na_country_nums > 1282
+wb_countries[which(many_na),1]
+wb_countries <- wb_countries[-which(many_na),]
+
+#Sort out NA values - cols:
+na_cols_nums <- apply(wb_countries,2,na_check)
+na_cols_nums
+
+#Drop cols with 195 NA vals (all rows are NA)
+many_na_cols <- na_cols_nums == 195
+wb_countries <- wb_countries[,-which(many_na_cols)]
+
+#Go back to countries
+na_country_nums <- apply(wb_countries,1,na_check)
+quantile(na_country_nums,probs=c(.85,.9,.95))
+many_na <- na_country_nums > 493
+wb_countries[which(many_na),1]
+many_na <- na_country_nums > 557
+wb_countries[many_na,1]
+many_na <- na_country_nums > 610
+wb_countries[many_na,1]
+#Still many of the rows are either not countries, very small countries, or war torn countries with little data.
+many_na <- na_country_nums > 557
+wb_countries[which(many_na),1]
+wb_countries <- wb_countries[-which(many_na),]
+
+
+#Back to cols
+na_cols_nums <- apply(wb_countries,2,na_check)
+na_cols_nums
+colnames(wb_countries[,which(na_cols_nums < 10)])
+#This looks ok, drop columns with more than 10 NA values
+wb_countries <- wb_countries[,-which(na_cols_nums > 10)]
+##175,185
+
+
+#Sort out the rest of the NA values
+na_country_nums <- apply(wb_countries,1,na_check)
+wb_countries <- wb_countries[-which(na_country_nums >14),]
+
+na_cols_nums <- apply(wb_countries,2,na_check)
+wb_countries <- wb_countries[,-which(na_cols_nums > 7)]
+
+###Impute here?
+
+na_countries <- apply(wb_countries,1,na_check)
+wb_countries[which(na_countries>0),1]
+#We can't get rid of these countries because some of them are quite important. Get rid of all cols with NA now
+na_cols_nums <- apply(wb_countries,2,na_check)
+wb_countries <- wb_countries[,-which(na_cols_nums>0)]
+#165,143
+
+#Check to make sure no NA:
+na_countries <- na_rows(wb_countries)
+length(na_countries[na_countries > 0])
+
+na_cols_nums <- na_cols(wb_countries)
+length(na_cols_nums[na_cols_nums > 0])
+```
+
+#Data cleaning - name adjustment
+```{r}
+#We want to join the two datasets on the name of the country, but not every country will have
+#a match; this section aims to join as many as possible
+joined <- merge(wb_countries,col_data,by.x='Country Name',by.y='Country')
+
+not_joined_vals <- function(x,y) {
+  return((!(x %in% y[,1])))
+}
+
+not_joined <- apply(wb_countries[,1],1,not_joined_vals,y=joined)
+
+#Countries that were not matched, see if can alter to match, or do not appear in COL data
+wb_countries[which(not_joined),1]
+nrow(wb_countries[which(not_joined),1])
+
+#Change patterns in names to match col_data, for example, get rid of the ", Republic of" etc. 
+#by removing the following comma
+spec_chars <- str_detect(wb_countries$'Country Name', regex(", The"))
+wb_countries[which(spec_chars),]$'Country Name'
+wb_countries$'Country Name' <- gsub(', The','',wb_countries$'Country Name')
+wb_countries$'Country Name' <- gsub(' and ',' And ',wb_countries$'Country Name')
+
+spec_chars <- str_detect(wb_countries$'Country Name', regex(",."))
+wb_countries[which(spec_chars),]$'Country Name'
+#Congo is not in col_data, so just remove the comma after the country name
+wb_countries$'Country Name' <- gsub(',.+','',wb_countries$'Country Name')
+wb_countries <- wb_countries[-which(wb_countries$'Country Name' == 'Congo'),]
+
+not_joined <- not_joined_vals(wb_countries,joined)
+
+#Rename some countries to match their value in col_data
+wb_countries[which(not_joined),1]
+wb_countries$'Country Name' <- gsub('Brunei Darussalam','Brunei',wb_countries$'Country Name')
+wb_countries$'Country Name' <- gsub('Korea','South Korea',wb_countries$'Country Name')
+wb_countries$'Country Name' <- gsub('Kyrgyz Republic','Kyrgyzstan',wb_countries$'Country Name')
+wb_countries$'Country Name' <- gsub('Russian Federation','Russia',wb_countries$'Country Name')
+wb_countries$'Country Name' <- gsub('Slovak Republic','Slovakia',wb_countries$'Country Name')
+
+joined <- merge(wb_countries,col_data,by.x='Country Name',by.y='Country')
+
+not_joined <- not_joined_vals(wb_countries,joined)
+wb_countries[which(not_joined),1]
+#The remaining countries either do not have a way to meaningfully change their name to merge, or
+#they don't have a value in col_data regardless of name change (ex: neither Cote d'Ivoire nor Ivory
+#Coast have a value in col_data)
+```
+
+#Data cleaning - column adjustment
+```{r}
+#There are a lot of columns that are either almost the exact same thing, oddly specific, or a function
+#of other columns
+colnames(joined)
+
+joined <- joined[,c(1,5,12,14,22,26,27,34,35,42,43,47,63,75,99,113,114,118,126,127,133,136,141,142,143:149)]
+col_countries <- joined
+```
+
+#Exploratory Data Analysis
+```{r}
+ggplot(col_countries,aes(`GDP per capita (current US$)`, `Cost of Living Plus Rent Index`)) + geom_point() + ggtitle('Cost of living vs. GDP per capita') + theme(plot.title = element_text(hjust = 0.5))
+ggplot(col_countries,aes(`Urban population (% of total population)`, `Cost of Living Plus Rent Index`)) + geom_point()
+ggplot(col_countries,aes(`Urban population (% of total population)`, `GDP per capita (current US$)`)) + geom_point()
+ggplot(col_countries,aes(`Mortality rate, infant (per 1,000 live births)`, `Cost of Living Plus Rent Index`)) + geom_point() + ggtitle('Cost of living vs. Infant mortality rate (per 1000 births)') + theme(plot.title = element_text(hjust = 0.5))
+ggplot(col_countries,aes(`Mortality rate, infant (per 1,000 live births)`, `GDP per capita (current US$)`)) + geom_point() + ggtitle('GDP per capita vs. Infant mortality rate (per 1000 births)') + theme(plot.title = element_text(hjust = 0.5))
+ggplot(col_countries,aes(`Women Business and the Law Index Score (scale 1-100)`, `Cost of Living Plus Rent Index`)) + geom_point()
+ggplot(col_countries,aes(`Incidence of tuberculosis (per 100,000 people)`, `Cost of Living Plus Rent Index`)) + geom_point()
+#It seems that the factors associated with greater development correlate with a higher cost of living, in accordance to our original thought process. This correlation is not always perfectly linear, it seems
+```
+
+#Model/variable selection
+```{r}
+modelnull <- lm(`Cost of Living Plus Rent Index` ~ 1,col_countries)
+colnames(col_countries)
+modelfull <- lm(`Cost of Living Plus Rent Index` ~ `DEC alternative conversion factor (LCU per US$)` + `Foreign direct investment, net inflows (% of GDP)` + `Forest area (% of land area)` + `GDP growth (annual %)` + `GDP per capita (current US$)` + `GDP per capita growth (annual %)` + `Incidence of tuberculosis (per 100,000 people)` + `Inflation, GDP deflator (annual %)` + `Labor force participation rate, total (% of total population ages 15+) (modeled ILO estimate)` + `Labor force, female (% of total labor force)` + `Mortality rate, infant (per 1,000 live births)` + `Population ages 0-14 (% of total population)` + `Population ages 15-64 (% of total population)` + `Population ages 65 and above (% of total population)` + `Population density (people per sq. km of land area)` + `Population growth (annual %)` + `Population, male (% of total population)` + `Probability of dying among children ages 5-9 years (per 1,000)` + `Probability of dying among youth ages 20-24 years (per 1,000)` + `Secure Internet servers (per 1 million people)` + `Unemployment, total (% of total labor force) (modeled ILO estimate)` + `Urban population (% of total population)` + `Urban population growth (annual %)` + `Women Business and the Law Index Score (scale 1-100)`,col_countries)
+summary(modelfull)
+#Only a few parameters are significant, so we can start at null and add variables using forward search
+
+step(modelnull,`Cost of Living Plus Rent Index` ~ `DEC alternative conversion factor (LCU per US$)` + `Foreign direct investment, net inflows (% of GDP)` + `Forest area (% of land area)` + `GDP growth (annual %)` + `GDP per capita (current US$)` + `GDP per capita growth (annual %)` + `Incidence of tuberculosis (per 100,000 people)` + `Inflation, GDP deflator (annual %)` + `Labor force participation rate, total (% of total population ages 15+) (modeled ILO estimate)` + `Labor force, female (% of total labor force)` + `Mortality rate, infant (per 1,000 live births)` + `Population ages 0-14 (% of total population)` + `Population ages 15-64 (% of total population)` + `Population ages 65 and above (% of total population)` + `Population density (people per sq. km of land area)` + `Population growth (annual %)` + `Population, male (% of total population)` + `Probability of dying among children ages 5-9 years (per 1,000)` + `Probability of dying among youth ages 20-24 years (per 1,000)` + `Secure Internet servers (per 1 million people)` + `Unemployment, total (% of total labor force) (modeled ILO estimate)` + `Urban population (% of total population)` + `Urban population growth (annual %)` + `Women Business and the Law Index Score (scale 1-100)`,direction='forward')
+
+forward_model <- lm(`Cost of Living Plus Rent Index` ~ `GDP per capita (current US$)` + `GDP per capita growth (annual %)` + `Labor force participation rate, total (% of total population ages 15+) (modeled ILO estimate)` + `Population density (people per sq. km of land area)` + `Foreign direct investment, net inflows (% of GDP)` + `DEC alternative conversion factor (LCU per US$)` + `Urban population (% of total population)`, data = col_countries)
+summary(forward_model)
+
+step(modelfull, `Cost of Living Plus Rent Index` ~ 1, direction='backward')
+#Exact same model
+
+#See if can remove insignificant variables
+reduced_model <- lm(`Cost of Living Plus Rent Index` ~ `GDP per capita (current US$)` + `GDP per capita growth (annual %)` + `Labor force participation rate, total (% of total population ages 15+) (modeled ILO estimate)` + `Population density (people per sq. km of land area)` + `Foreign direct investment, net inflows (% of GDP)`, data = col_countries)
+summary(reduced_model)
+
+anova(forward_model,reduced_model)
+AIC(forward_model)
+AIC(reduced_model)
+#Partial F test barely misses threshold for statistical significance
+
+plot(forward_model)
+
+#Too far above predicted value
+col_countries[c(9,36),c(1,6,7,10,16,3,2,23)]
+#Too far below predicted value
+col_countries[65,c(1,6,7,10,16,3,2,23)]
+#Bahamas: has a large tourism industry, driving prices above what they would normally be given its parameters
+#Luxembourg: has a very high GDP per capita due to small population and business friendly governance, leading the model to estimate its COL as being higher than it actually is
+#Ethiopia:
+
+#Beyond Cook's distance (excl. #65)
+col_countries[46,c(1,6,7,10,16,3,2,23)] #High leverage, high residual
+col_countries[96,c(1,6,7,10,16,3,2,23)] #Very high leverage, low residual
+#Singapore: exclusively urban country composed of one city, driving up urban population to 100 and thus its predicted COL
+#Hungary:
+
+#Remove bad leverage points and extreme outliers, refit model
+col_countries_new <- col_countries[-c(9,65,96),]
+rownames(col_countries_new) <- 1:nrow(col_countries_new)
+
+new_model <- lm(`Cost of Living Plus Rent Index` ~ `GDP per capita (current US$)` + `GDP per capita growth (annual %)` + `Labor force participation rate, total (% of total population ages 15+) (modeled ILO estimate)` + `Population density (people per sq. km of land area)` + `Foreign direct investment, net inflows (% of GDP)` + `DEC alternative conversion factor (LCU per US$)` + `Urban population (% of total population)`, data = col_countries_new)
+summary(new_model)
+par(mfrow=c(2,2))
+plot(new_model)
+#Modest increase in adj R^2, but creates new outliers/leverage points
+col_countries_new[c(56,71,35),] #These aren't weird countries
+
+new_model_reduc <- lm(`Cost of Living Plus Rent Index` ~ `GDP per capita (current US$)` + `GDP per capita growth (annual %)` + `Labor force participation rate, total (% of total population ages 15+) (modeled ILO estimate)` + `Population density (people per sq. km of land area)`, data = col_countries_new)
+summary(new_model_reduc)
+anova(new_model_reduc,new_model)
+#Not significantly better, however keep due to simplicity
+
+plot(new_model_reduc)
+
+AIC(new_model_reduc)
+AIC(new_model)
+
+col_countries_new$`modelest` <- fitted(new_model_reduc)
+ggplot(col_countries_new,aes(`Cost of Living Plus Rent Index`,modelest)) + geom_point() + geom_segment(aes(x=20,y=20,xend=80,yend=80),col='red',size=1) + xlab('Actual COL Index') + ylab('Model Estimated COL') + geom_text(x=78, y=72, label="Perfect fit",col='red',size=3.5) + geom_text(x=78, y=69, label="(y=x)",col='red',size=3.5) + ggtitle('Model predicted COL vs. actual COL values') + theme(plot.title = element_text(hjust = 0.5))
+```
+
+#Correlation check
+```{r}
+cor_data <- col_countries[,c(6,7,10,16)]
+names(cor_data) <- c('gdp/capita','gdp/capita growth','labor force part. rate','pop. dens.')
+cormat <- cor(cor_data)
+get_upper_tri <- function(cormat) {
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+upper_tri <- get_upper_tri(cormat)
+library(reshape2)
+melted_cormat <- melt(upper_tri)
+melted_cormat
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + geom_tile(color='white') + scale_fill_gradient2(low = "red", high = "green", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name="Pearson\nCorrelation")
+```
